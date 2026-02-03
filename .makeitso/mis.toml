@@ -1,0 +1,6 @@
+name = "make-it-so-cli"
+
+# 👇 Project-scoped settings available to all plugins
+[project_variables]
+# — User-created (optional) env variables accessible by plugins through the ctx object:
+foo = "bar"            # ← EXAMPLE of a project-scoped variable

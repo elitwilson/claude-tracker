@@ -1,0 +1,55 @@
+[plugin]
+name = "claude"
+description = "Manage Claude workflow files in your projects"
+version = "0.1.0"
+registry = "https://github.com/elitwilson/claude-workflows"
+
+[commands.add]
+script = "./add.ts"
+description = "Add workflow files to .claude/ directory"
+
+[commands.add.args.required]
+
+[commands.add.args.optional.dry-run]
+description = "Preview changes without modifying files"
+arg_type = "boolean"
+
+[commands.add.args.optional.stack]
+description = "Comma-separated stacks to include (e.g., python,typescript)"
+arg_type = "string"
+
+[commands.upgrade]
+script = "./upgrade.ts"
+description = "Upgrade workflow files to latest version"
+
+[commands.upgrade.args.required]
+
+[commands.upgrade.args.optional.skip-modified]
+description = "Skip files that have been modified"
+arg_type = "boolean"
+
+[commands.upgrade.args.optional.dry-run]
+description = "Preview changes without modifying files"
+arg_type = "boolean"
+
+[commands.upgrade.args.optional.force]
+description = "Overwrite all files, including modified ones"
+arg_type = "boolean"
+
+[deno_dependencies]
+cliffy = "https://deno.land/x/cliffy@v1.0.0-rc.4/prompt/mod.ts"
+
+[permissions]
+file_read = [
+    ".",
+    "$HOME/.claude",
+]
+file_write = [
+    ".",
+    "$HOME/.claude",
+]
+network = [
+    "raw.githubusercontent.com",
+    "api.github.com",
+]
+run_commands = []

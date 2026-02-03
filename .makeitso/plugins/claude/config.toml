@@ -1,0 +1,10 @@
+# config.toml
+# ------------------------------------------------------------
+# User Plugin Configuration for Claude Workflows Plugin
+# Access values in your plugin via `ctx.config.<key>`
+
+# GitHub repository configuration
+# Format: owner/repo (e.g., "elitwilson/claude-workflows")
+repo_owner = "elitwilson"
+repo_name = "claude-workflows"
+default_branch = "main"

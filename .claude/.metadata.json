@@ -1,0 +1,10 @@
+{
+  "files": {
+    "code-style.md": {
+      "source": "stacks/rust/code-style.md"
+    },
+    "testing.md": {
+      "source": "stacks/rust/testing.md"
+    }
+  }
+}
