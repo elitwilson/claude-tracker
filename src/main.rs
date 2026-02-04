@@ -161,10 +161,6 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
-fn total_input(s: &ProjectSummary) -> u64 {
-    s.input_tokens + s.cache_creation_input_tokens + s.cache_read_input_tokens
-}
-
 // --- Rendering ----------------------------------------------------------
 
 enum PendingAction {
@@ -210,8 +206,9 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
         .map(|(i, _)| i);
 
     let total_minutes: i64 = summaries.iter().map(|s| s.total_minutes).sum();
-    let total_input_tokens: u64 = summaries.iter().map(total_input).sum();
+    let total_input_tokens: u64 = summaries.iter().map(|s| s.input_tokens + s.cache_creation_input_tokens).sum();
     let total_output_tokens: u64 = summaries.iter().map(|s| s.output_tokens).sum();
+    let total_cache_read_tokens: u64 = summaries.iter().map(|s| s.cache_read_input_tokens).sum();
 
     let chunks = Layout::vertical([
         Constraint::Length(1),                       // header
@@ -249,8 +246,9 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
             Row::new([
                 name_cell,
                 Cell::new(Text::from(format!("{}m", s.total_minutes)).alignment(Alignment::Right)),
-                Cell::new(Text::from(format_tokens(total_input(s))).alignment(Alignment::Right)),
+                Cell::new(Text::from(format_tokens(s.input_tokens + s.cache_creation_input_tokens)).alignment(Alignment::Right)),
                 Cell::new(Text::from(format_tokens(s.output_tokens)).alignment(Alignment::Right)),
+                Cell::new(Text::from(format_tokens(s.cache_read_input_tokens)).alignment(Alignment::Right)),
             ])
         })
         .collect();
@@ -266,6 +264,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
         Cell::new(Text::from("Time").alignment(Alignment::Right)).style(Style::new().italic()),
         Cell::new(Text::from("Input").alignment(Alignment::Right)).style(Style::new().italic()),
         Cell::new(Text::from("Output").alignment(Alignment::Right)).style(Style::new().italic()),
+        Cell::new(Text::from("Cache").alignment(Alignment::Right)).style(Style::new().italic()),
     ])
     .style(Style::new().bold());
 
@@ -274,6 +273,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
         Constraint::Min(4),  // "time" / "98m"
         Constraint::Min(5),  // "input" / "30.8M"
         Constraint::Min(6),  // "output" / "2.9k"
+        Constraint::Min(5),  // "cache" / "44.2M"
     ])
     .header(header)
     .block(block)
@@ -284,12 +284,13 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
     // Totals
     f.render_widget(
         Paragraph::new(format!(
-            "  Today: {}m  ({}h {}m)  {} in  {} out",
+            "  Today: {}m  ({}h {}m)  {} in  {} out  {} cache",
             total_minutes,
             total_minutes / 60,
             total_minutes % 60,
             format_tokens(total_input_tokens),
             format_tokens(total_output_tokens),
+            format_tokens(total_cache_read_tokens),
         )),
         chunks[4],
     );

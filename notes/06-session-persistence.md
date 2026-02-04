@@ -1,12 +1,12 @@
 ---
-version: 0.2.0
+version: 0.3.0
 updated: 2026-02-04
 ---
 # Feature: Session Persistence
 
-**Status:** Planning\
+**Status:** Completed\
 **Started:** 2026-02-04\
-**Completed:** —
+**Completed:** 2026-02-04
 
 ---
 
@@ -56,12 +56,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 ## Success Criteria
 
-- [ ] All session files are persisted to `~/.config/claude-tracker/sessions.db` on each scan
-- [ ] Repeated scans of the same files produce no duplicate rows (idempotent)
-- [ ] Active sessions update correctly on subsequent scans; rows stabilize once the session closes
-- [ ] TUI display and refresh behavior is unchanged from the user's perspective
-- [ ] DB file and table are created automatically on first run
-- [ ] Midnight-spanning sessions: `date` column and today-filter behavior are consistent (test defines the contract)
+- [x] All session files are persisted to `~/.config/claude-tracker/sessions.db` on each scan
+- [x] Repeated scans of the same files produce no duplicate rows (idempotent)
+- [x] Active sessions update correctly on subsequent scans; rows stabilize once the session closes
+- [x] TUI display and refresh behavior is unchanged from the user's perspective
+- [x] DB file and table are created automatically on first run
+- [x] Midnight-spanning sessions: `date` column and today-filter behavior are consistent (test defines the contract)
 
 ---
 
@@ -95,10 +95,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 ## High-Level Todo
 
-- [ ] Add `rusqlite` dependency (bundled feature)
-- [ ] Create `store` module: connection init, schema creation, upsert function
-- [ ] Refactor `load_sessions`: scan → parse → upsert all (via store) → filter today → return
-- [ ] Tests: idempotent upsert, schema creation, active-session update, midnight-spanning date behavior
+- [x] Add `rusqlite` dependency (bundled feature)
+- [x] Create `store` module: connection init, schema creation, upsert function
+- [x] Refactor `load_sessions`: scan → parse → upsert all (via store) → filter today → return
+- [x] Tests: idempotent upsert, schema creation, active-session update, midnight-spanning date behavior
 
 ---
 
