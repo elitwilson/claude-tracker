@@ -22,6 +22,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
+use std::sync::mpsc;
 
 // --- Config --------------------------------------------------------------
 
@@ -379,12 +380,12 @@ fn teardown(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
 
 // --- Data loading -------------------------------------------------------
 
-fn scan_and_upsert(
+fn scan_and_parse(
     projects_dir: &Path,
     idle_threshold: TimeDelta,
-    store: &store::Store,
-) -> Result<()> {
+) -> Result<Vec<(String, parser::Session)>> {
     let session_files = scanner::find_session_files(projects_dir);
+    let mut results = Vec::new();
 
     for file_path in &session_files {
         let contents = std::fs::read_to_string(file_path)
@@ -401,11 +402,11 @@ fn scan_and_upsert(
                 .with_context(|| format!("stripping prefix from {:?}", file_path))?
                 .to_str()
                 .context("non-UTF8 path")?;
-            store.upsert(source_path, &session)?;
+            results.push((source_path.to_string(), session));
         }
     }
 
-    Ok(())
+    Ok(results)
 }
 
 // --- Entry point --------------------------------------------------------
@@ -426,7 +427,9 @@ fn main() -> Result<()> {
     let db_path = config_path()?.with_file_name("sessions.db");
     let store = store::Store::new(&db_path)?;
 
-    scan_and_upsert(&projects_dir, idle_threshold, &store)?;
+    for (source_path, session) in scan_and_parse(&projects_dir, idle_threshold)? {
+        store.upsert(&source_path, &session)?;
+    }
 
     let mut timeframe = Timeframe::Today;
     let mut summaries = {
@@ -446,11 +449,26 @@ fn main() -> Result<()> {
 
     let mut term = setup()?;
 
+    let (tx, rx) = mpsc::channel::<Result<Vec<(String, parser::Session)>>>();
+    let mut scan_in_progress = false;
     let mut needs_refresh = false;
     let mut pending: Option<PendingAction> = None;
 
     loop {
         term.draw(|f| render(f, &summaries, &spinner, &pending, timeframe.label()))?;
+
+        // Process completed background scan
+        if let Ok(result) = rx.try_recv() {
+            scan_in_progress = false;
+            if let Ok(sessions) = result {
+                for (source_path, session) in sessions {
+                    store.upsert(&source_path, &session)?;
+                }
+                let (start, end) = timeframe.boundaries();
+                summaries = aggregate_sessions(&store.query_range(start, end)?);
+            }
+            last_refresh = Instant::now();
+        }
 
         if event::poll(TICK_RATE)? {
             if let Event::Key(k) = event::read()? {
@@ -465,8 +483,10 @@ fn main() -> Result<()> {
                     // Only process r/c when the key wasn't consumed by pending logic.
                     KeyOutcome::Continue if !had_pending => match k.code {
                         KeyCode::Char('r') => {
-                            spinner.reset();
-                            needs_refresh = true;
+                            if !scan_in_progress {
+                                spinner.reset();
+                                needs_refresh = true;
+                            }
                         }
                         KeyCode::Char('c') => {
                             pending = Some(PendingAction::Config);
@@ -485,33 +505,15 @@ fn main() -> Result<()> {
 
         spinner.tick();
 
-        if needs_refresh || last_refresh.elapsed() >= REFRESH_INTERVAL {
-            // Drain event queue before expensive refresh
-            let mut should_quit = false;
-            while event::poll(Duration::ZERO)? {
-                if let Event::Key(k) = event::read()? {
-                    match handle_key(&mut pending, k.code) {
-                        KeyOutcome::Quit => {
-                            should_quit = true;
-                            break;
-                        }
-                        KeyOutcome::OpenConfig => {
-                            teardown(&mut term)?;
-                            open_config_in_editor()?;
-                            return Ok(());
-                        }
-                        KeyOutcome::Continue => {}
-                    }
-                }
-            }
-            if should_quit {
-                break;
-            }
-
-            scan_and_upsert(&projects_dir, idle_threshold, &store)?;
-            let (start, end) = timeframe.boundaries();
-            summaries = aggregate_sessions(&store.query_range(start, end)?);
-            last_refresh = Instant::now();
+        // Spawn background scan if not already running and due
+        if !scan_in_progress && (needs_refresh || last_refresh.elapsed() >= REFRESH_INTERVAL) {
+            let dir = projects_dir.clone();
+            let threshold = idle_threshold;
+            let sender = tx.clone();
+            std::thread::spawn(move || {
+                let _ = sender.send(scan_and_parse(&dir, threshold));
+            });
+            scan_in_progress = true;
             needs_refresh = false;
         }
     }
