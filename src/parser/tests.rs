@@ -95,11 +95,11 @@ fn calculates_session_duration() {
         },
     ];
 
-    let session = assemble_session(&messages).unwrap();
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
 
     assert_eq!(session.start, "2026-02-03T10:00:00Z".parse::<DateTime<Utc>>().unwrap());
     assert_eq!(session.end, "2026-02-03T10:05:30Z".parse::<DateTime<Utc>>().unwrap());
-    assert_eq!(session.duration.num_seconds(), 330); // 5 min 30 sec
+    assert_eq!(session.duration.num_seconds(), 330); // 5 min 30 sec, single gap below threshold
     assert_eq!(session.project, "/Users/etwilson/workdev/project");
 }
 
@@ -107,7 +107,60 @@ fn calculates_session_duration() {
 fn filters_empty_sessions() {
     let messages: Vec<ParsedMessage> = vec![];
 
-    assert!(assemble_session(&messages).is_none());
+    assert!(assemble_session(&messages, TimeDelta::minutes(15)).is_none());
+}
+
+// --- Idle timeout gap tests ---------------------------------------------
+
+/// Helper: a message at the given timestamp with a fixed cwd.
+fn msg(timestamp: &str) -> ParsedMessage {
+    ParsedMessage {
+        timestamp: timestamp.parse().unwrap(),
+        cwd: Some("/work/project".to_string()),
+    }
+}
+
+#[test]
+fn gaps_below_threshold_count_fully() {
+    // Gaps: 5m, 3m — both under 15m threshold → full 8m counted
+    let messages = vec![
+        msg("2026-02-03T10:00:00Z"),
+        msg("2026-02-03T10:05:00Z"),
+        msg("2026-02-03T10:08:00Z"),
+    ];
+
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
+
+    assert_eq!(session.duration.num_seconds(), 480); // 8 min
+}
+
+#[test]
+fn gap_above_threshold_is_excluded() {
+    // Gaps: 5m (below), 30m (above) → only the 5m counts
+    let messages = vec![
+        msg("2026-02-03T10:00:00Z"),
+        msg("2026-02-03T10:05:00Z"),
+        msg("2026-02-03T10:35:00Z"),
+    ];
+
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
+
+    assert_eq!(session.duration.num_seconds(), 300); // 5 min
+}
+
+#[test]
+fn mixed_gaps_only_large_ones_dropped() {
+    // Gaps: 3m (below), 20m (above), 4m (below) → 3 + 4 = 7m
+    let messages = vec![
+        msg("2026-02-03T10:00:00Z"),
+        msg("2026-02-03T10:03:00Z"),
+        msg("2026-02-03T10:23:00Z"),
+        msg("2026-02-03T10:27:00Z"),
+    ];
+
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
+
+    assert_eq!(session.duration.num_seconds(), 420); // 7 min
 }
 
 #[test]

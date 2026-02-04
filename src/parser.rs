@@ -34,14 +34,20 @@ pub fn parse_message(line: &str) -> Option<ParsedMessage> {
 
 /// Assemble a list of parsed messages into a Session.
 /// Returns None if the message list is empty.
-pub fn assemble_session(messages: &[ParsedMessage]) -> Option<Session> {
+/// Gaps between consecutive messages that meet or exceed `idle_threshold`
+/// are excluded from the duration (clock pauses during idle).
+pub fn assemble_session(messages: &[ParsedMessage], idle_threshold: TimeDelta) -> Option<Session> {
     if messages.is_empty() {
         return None;
     }
 
     let start = messages.first()?.timestamp;
     let end = messages.last()?.timestamp;
-    let duration = end - start;
+    let duration = messages
+        .windows(2)
+        .map(|w| w[1].timestamp - w[0].timestamp)
+        .filter(|gap| *gap < idle_threshold)
+        .sum();
     let project = messages
         .iter()
         .filter_map(|m| m.cwd.as_deref())
