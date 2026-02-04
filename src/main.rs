@@ -11,8 +11,11 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    text::Line,
-    widgets::Paragraph,
+    layout::{Alignment, Constraint, Layout},
+    prelude::Stylize,
+    style::{Color, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
     Frame, Terminal,
 };
 use std::collections::HashMap;
@@ -163,12 +166,7 @@ fn total_input(s: &ProjectSummary) -> u64 {
 
 // --- Rendering ----------------------------------------------------------
 
-const NOW_MARKER: &str = "  ← now";
-const NOW_MARKER_COLS: usize = 7; // "← " is 1 display column despite 3 UTF-8 bytes
-
 fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner) {
-    let width = f.area().width as usize;
-
     let most_recent_idx = summaries
         .iter()
         .enumerate()
@@ -176,57 +174,96 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
         .map(|(i, _)| i);
 
     let total_minutes: i64 = summaries.iter().map(|s| s.total_minutes).sum();
-
-    let mut lines: Vec<Line> = Vec::new();
-
-    lines.push(Line::from(format!("claude-tracker  {}", spinner.current())));
-    lines.push(Line::from(""));
-
-    // Pre-compute column widths for alignment
-    let time_width = summaries.iter().map(|s| format!("{}m", s.total_minutes).len()).max().unwrap_or(0);
-    let input_width = summaries.iter().map(|s| format_tokens(total_input(s)).len()).max().unwrap_or(0);
-    let output_width = summaries.iter().map(|s| format_tokens(s.output_tokens).len()).max().unwrap_or(0);
-
-    for (i, summary) in summaries.iter().enumerate() {
-        let name = last_segment(&summary.project);
-        let time = format!("{}m", summary.total_minutes);
-        let input = format_tokens(total_input(summary));
-        let output = format_tokens(summary.output_tokens);
-        let (suffix, suffix_cols) = if Some(i) == most_recent_idx {
-            (NOW_MARKER, NOW_MARKER_COLS)
-        } else {
-            ("", 0)
-        };
-
-        let cols = format!(
-            "{:>tw$}  {:>iw$} in  {:>ow$} out",
-            time, input, output,
-            tw = time_width,
-            iw = input_width,
-            ow = output_width,
-        );
-        let pad = width.saturating_sub(2 + name.len() + cols.len() + suffix_cols);
-
-        lines.push(Line::from(format!("  {}{}{}{}", name, " ".repeat(pad), cols, suffix)));
-    }
-
     let total_input_tokens: u64 = summaries.iter().map(total_input).sum();
     let total_output_tokens: u64 = summaries.iter().map(|s| s.output_tokens).sum();
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(format!(
-        "  Today: {}m  ({}h {}m)  {} in  {} out",
-        total_minutes,
-        total_minutes / 60,
-        total_minutes % 60,
-        format_tokens(total_input_tokens),
-        format_tokens(total_output_tokens),
-    )));
+    let chunks = Layout::vertical([
+        Constraint::Length(1),                       // header
+        Constraint::Length(1),                       // blank
+        Constraint::Length(summaries.len() as u16 + 3), // table + header + border
+        Constraint::Length(1),                       // blank
+        Constraint::Length(1),                       // totals
+        Constraint::Length(1),                       // blank
+        Constraint::Length(1),                       // footer
+        Constraint::Fill(1),                         // remaining
+    ])
+    .split(f.area());
 
-    lines.push(Line::from(""));
-    lines.push(Line::from("  r refresh · c config · q quit"));
+    // Header
+    f.render_widget(
+        Paragraph::new(format!("claude-tracker  {}", spinner.current()))
+            .style(Style::new().bold()),
+        chunks[0],
+    );
 
-    f.render_widget(Paragraph::new(lines), f.area());
+    // Project table
+    let rows: Vec<Row> = summaries
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let name = last_segment(&s.project);
+            let name_cell = if Some(i) == most_recent_idx {
+                Cell::new(Text::from(Line::from(vec![
+                    Span::styled("  ● ", Style::new().fg(Color::Green)),
+                    Span::raw(name.to_string()),
+                ])))
+            } else {
+                Cell::new(format!("    {}", name))
+            };
+            Row::new([
+                name_cell,
+                Cell::new(Text::from(format!("{}m", s.total_minutes)).alignment(Alignment::Right)),
+                Cell::new(Text::from(format_tokens(total_input(s))).alignment(Alignment::Right)),
+                Cell::new(Text::from(format_tokens(s.output_tokens)).alignment(Alignment::Right)),
+            ])
+        })
+        .collect();
+
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(Color::DarkGray))
+        .title(" projects ");
+
+    let header = Row::new([
+        Cell::new(""),
+        Cell::new(Text::from("Time").alignment(Alignment::Right)).style(Style::new().italic()),
+        Cell::new(Text::from("Input").alignment(Alignment::Right)).style(Style::new().italic()),
+        Cell::new(Text::from("Output").alignment(Alignment::Right)).style(Style::new().italic()),
+    ])
+    .style(Style::new().bold());
+
+    let table = Table::new(rows, [
+        Constraint::Fill(1),
+        Constraint::Min(4),  // "time" / "98m"
+        Constraint::Min(5),  // "input" / "30.8M"
+        Constraint::Min(6),  // "output" / "2.9k"
+    ])
+    .header(header)
+    .block(block)
+    .column_spacing(2);
+
+    f.render_widget(table, chunks[2]);
+
+    // Totals
+    f.render_widget(
+        Paragraph::new(format!(
+            "  Today: {}m  ({}h {}m)  {} in  {} out",
+            total_minutes,
+            total_minutes / 60,
+            total_minutes % 60,
+            format_tokens(total_input_tokens),
+            format_tokens(total_output_tokens),
+        )),
+        chunks[4],
+    );
+
+    // Footer
+    f.render_widget(
+        Paragraph::new("  r refresh · c config · q quit")
+            .style(Style::new().dim()),
+        chunks[6],
+    );
 }
 
 // --- Terminal lifecycle -------------------------------------------------
