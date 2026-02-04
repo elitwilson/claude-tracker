@@ -1,5 +1,5 @@
 use super::*;
-use chrono::{DateTime, Local, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 // Realistic fixtures drawn from actual Claude Code transcript format.
 // Include enough fields to verify the parser ignores irrelevant keys.
@@ -198,70 +198,6 @@ fn mixed_gaps_only_large_ones_dropped() {
     let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
 
     assert_eq!(session.duration.num_seconds(), 420); // 7 min
-}
-
-#[test]
-fn session_today_is_included() {
-    let start: DateTime<Utc> = "2026-02-03T12:00:00Z".parse().unwrap();
-    let end: DateTime<Utc> = "2026-02-03T12:30:00Z".parse().unwrap();
-    // Derive "today" from the session itself so the test is timezone-agnostic
-    let today = start.with_timezone(&Local).date_naive();
-
-    let session = Session {
-        start,
-        end,
-        duration: end - start,
-        project: "/test".to_string(),
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-    };
-
-    assert!(is_today(&session, today));
-}
-
-#[test]
-fn session_yesterday_is_excluded() {
-    let start: DateTime<Utc> = "2026-02-03T12:00:00Z".parse().unwrap();
-    let end: DateTime<Utc> = "2026-02-03T12:30:00Z".parse().unwrap();
-    // "today" is the day after the session ended — session is fully in the past
-    let today = end.with_timezone(&Local).date_naive() + TimeDelta::days(1);
-
-    let session = Session {
-        start,
-        end,
-        duration: end - start,
-        project: "/test".to_string(),
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-    };
-
-    assert!(!is_today(&session, today));
-}
-
-#[test]
-fn session_spanning_midnight_is_included() {
-    let start: DateTime<Utc> = "2026-02-03T23:00:00Z".parse().unwrap();
-    let end: DateTime<Utc> = "2026-02-04T01:00:00Z".parse().unwrap();
-    // "today" is the end's local date — session should be included
-    // because end falls on today, even if start does not
-    let today = end.with_timezone(&Local).date_naive();
-
-    let session = Session {
-        start,
-        end,
-        duration: end - start,
-        project: "/test".to_string(),
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-    };
-
-    assert!(is_today(&session, today));
 }
 
 // --- Token usage tests --------------------------------------------------

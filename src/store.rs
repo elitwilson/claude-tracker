@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::Local;
+use chrono::{DateTime, Local, TimeDelta, Utc};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -62,6 +62,49 @@ impl Store {
             )
             .context("upserting session")?;
         Ok(())
+    }
+
+    pub fn query_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<parser::Session>> {
+        let start_str = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let end_str = end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        let mut stmt = self.conn.prepare(
+            "SELECT project, start_time, end_time, duration_seconds,
+                    input_tokens, output_tokens,
+                    cache_creation_input_tokens, cache_read_input_tokens
+             FROM sessions
+             WHERE start_time < ?1 AND end_time >= ?2",
+        ).context("preparing query_range")?;
+
+        let rows = stmt.query_map(rusqlite::params![end_str, start_str], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        }).context("querying sessions")?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            let (project, start_time, end_time, duration_secs, input, output, cache_create, cache_read) = row?;
+            sessions.push(parser::Session {
+                start: start_time.parse().context("parsing start_time")?,
+                end: end_time.parse().context("parsing end_time")?,
+                duration: TimeDelta::seconds(duration_secs),
+                project,
+                input_tokens: input as u64,
+                output_tokens: output as u64,
+                cache_creation_input_tokens: cache_create as u64,
+                cache_read_input_tokens: cache_read as u64,
+            });
+        }
+
+        Ok(sessions)
     }
 }
 

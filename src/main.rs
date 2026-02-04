@@ -4,7 +4,7 @@ mod spinner;
 mod store;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, TimeDelta, Utc};
+use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -86,6 +86,59 @@ fn open_config_in_editor() -> Result<()> {
         .status()
         .with_context(|| format!("failed to open {} with {}", path.display(), editor))?;
     Ok(())
+}
+
+// --- Timeframe -----------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Timeframe {
+    Today,
+    Last7Days,
+    Last30Days,
+}
+
+impl Timeframe {
+    fn next(self) -> Self {
+        match self {
+            Timeframe::Today => Timeframe::Last7Days,
+            Timeframe::Last7Days => Timeframe::Last30Days,
+            Timeframe::Last30Days => Timeframe::Today,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Timeframe::Today => "Today",
+            Timeframe::Last7Days => "Last 7 days",
+            Timeframe::Last30Days => "Last 30 days",
+        }
+    }
+
+    /// Compute [start, end) boundaries in UTC. Start and end are local
+    /// midnight, converted to UTC for comparison against stored timestamps.
+    fn boundaries(&self) -> (DateTime<Utc>, DateTime<Utc>) {
+        let today = Local::now().date_naive();
+        let days_back: i64 = match self {
+            Timeframe::Today => 0,
+            Timeframe::Last7Days => 6,
+            Timeframe::Last30Days => 29,
+        };
+        let start_date = today - TimeDelta::days(days_back);
+        let end_date = today + TimeDelta::days(1);
+
+        let start_utc = Local
+            .from_local_datetime(&start_date.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc = Local
+            .from_local_datetime(&end_date.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        (start_utc, end_utc)
+    }
 }
 
 // --- View model ---------------------------------------------------------
@@ -198,7 +251,7 @@ fn handle_key(pending: &mut Option<PendingAction>, code: KeyCode) -> KeyOutcome 
     }
 }
 
-fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner, pending: &Option<PendingAction>) {
+fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner, pending: &Option<PendingAction>, timeframe_label: &str) {
     let most_recent_idx = summaries
         .iter()
         .enumerate()
@@ -245,7 +298,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
             };
             Row::new([
                 name_cell,
-                Cell::new(Text::from(format!("{}m", s.total_minutes)).alignment(Alignment::Right)),
+                Cell::new(Text::from(format!("{}m ({}h {}m)", s.total_minutes, s.total_minutes / 60, s.total_minutes % 60)).alignment(Alignment::Right)),
                 Cell::new(Text::from(format_tokens(s.input_tokens + s.cache_creation_input_tokens)).alignment(Alignment::Right)),
                 Cell::new(Text::from(format_tokens(s.output_tokens)).alignment(Alignment::Right)),
                 Cell::new(Text::from(format_tokens(s.cache_read_input_tokens)).alignment(Alignment::Right)),
@@ -270,7 +323,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
 
     let table = Table::new(rows, [
         Constraint::Fill(1),
-        Constraint::Min(4),  // "time" / "98m"
+        Constraint::Min(12), // "time" / "98m (1h 38m)"
         Constraint::Min(5),  // "input" / "30.8M"
         Constraint::Min(6),  // "output" / "2.9k"
         Constraint::Min(5),  // "cache" / "44.2M"
@@ -284,7 +337,8 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
     // Totals
     f.render_widget(
         Paragraph::new(format!(
-            "  Today: {}m  ({}h {}m)  {} in  {} out  {} cache",
+            "  {}: {}m  ({}h {}m)  {} in  {} out  {} cache",
+            timeframe_label,
             total_minutes,
             total_minutes / 60,
             total_minutes % 60,
@@ -299,7 +353,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
     let (footer_text, footer_style) = match pending {
         Some(PendingAction::Quit) => ("  Quit? Press Enter to confirm", Style::new()),
         Some(PendingAction::Config) => ("  Open config? Press Enter to confirm", Style::new()),
-        None => ("  r refresh · c config · q quit", Style::new().dim()),
+        None => ("  t timeframe · r refresh · c config · q quit", Style::new().dim()),
     };
     f.render_widget(
         Paragraph::new(footer_text).style(footer_style),
@@ -325,14 +379,12 @@ fn teardown(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
 
 // --- Data loading -------------------------------------------------------
 
-fn load_sessions(
+fn scan_and_upsert(
     projects_dir: &Path,
     idle_threshold: TimeDelta,
     store: &store::Store,
-) -> Result<Vec<parser::Session>> {
+) -> Result<()> {
     let session_files = scanner::find_session_files(projects_dir);
-    let today = Local::now().date_naive();
-    let mut sessions = Vec::new();
 
     for file_path in &session_files {
         let contents = std::fs::read_to_string(file_path)
@@ -350,14 +402,10 @@ fn load_sessions(
                 .to_str()
                 .context("non-UTF8 path")?;
             store.upsert(source_path, &session)?;
-
-            if parser::is_today(&session, today) {
-                sessions.push(session);
-            }
         }
     }
 
-    Ok(sessions)
+    Ok(())
 }
 
 // --- Entry point --------------------------------------------------------
@@ -378,14 +426,13 @@ fn main() -> Result<()> {
     let db_path = config_path()?.with_file_name("sessions.db");
     let store = store::Store::new(&db_path)?;
 
-    let sessions = load_sessions(&projects_dir, idle_threshold, &store)?;
+    scan_and_upsert(&projects_dir, idle_threshold, &store)?;
 
-    if sessions.is_empty() {
-        println!("No sessions today.");
-        return Ok(());
-    }
-
-    let mut summaries = aggregate_sessions(&sessions);
+    let mut timeframe = Timeframe::Today;
+    let mut summaries = {
+        let (start, end) = timeframe.boundaries();
+        aggregate_sessions(&store.query_range(start, end)?)
+    };
     let mut spinner = spinner::Spinner::new();
     let mut last_refresh = Instant::now();
 
@@ -403,7 +450,7 @@ fn main() -> Result<()> {
     let mut pending: Option<PendingAction> = None;
 
     loop {
-        term.draw(|f| render(f, &summaries, &spinner, &pending))?;
+        term.draw(|f| render(f, &summaries, &spinner, &pending, timeframe.label()))?;
 
         if event::poll(TICK_RATE)? {
             if let Event::Key(k) = event::read()? {
@@ -423,6 +470,11 @@ fn main() -> Result<()> {
                         }
                         KeyCode::Char('c') => {
                             pending = Some(PendingAction::Config);
+                        }
+                        KeyCode::Char('t') => {
+                            timeframe = timeframe.next();
+                            let (start, end) = timeframe.boundaries();
+                            summaries = aggregate_sessions(&store.query_range(start, end)?);
                         }
                         _ => {}
                     },
@@ -456,8 +508,9 @@ fn main() -> Result<()> {
                 break;
             }
 
-            let sessions = load_sessions(&projects_dir, idle_threshold, &store)?;
-            summaries = aggregate_sessions(&sessions);
+            scan_and_upsert(&projects_dir, idle_threshold, &store)?;
+            let (start, end) = timeframe.boundaries();
+            summaries = aggregate_sessions(&store.query_range(start, end)?);
             last_refresh = Instant::now();
             needs_refresh = false;
         }
@@ -607,5 +660,21 @@ mod tests {
     #[test]
     fn formats_exact_thousand() {
         assert_eq!(format_tokens(1000), "1k");
+    }
+
+    // --- Timeframe cycling ---------------------------------------------------
+
+    #[test]
+    fn timeframe_cycles_today_7d_30d_and_wraps() {
+        let mut tf = Timeframe::Today;
+
+        tf = tf.next();
+        assert_eq!(tf, Timeframe::Last7Days);
+
+        tf = tf.next();
+        assert_eq!(tf, Timeframe::Last30Days);
+
+        tf = tf.next();
+        assert_eq!(tf, Timeframe::Today);
     }
 }

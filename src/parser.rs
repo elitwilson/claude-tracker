@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 #[derive(Debug, PartialEq)]
 pub struct TokenUsage {
@@ -100,13 +100,6 @@ pub fn assemble_session(messages: &[ParsedMessage], idle_threshold: TimeDelta) -
         cache_creation_input_tokens,
         cache_read_input_tokens,
     })
-}
-
-/// True if the session has any activity on the given local calendar date.
-pub fn is_today(session: &Session, today: NaiveDate) -> bool {
-    let start_date = session.start.with_timezone(&Local).date_naive();
-    let end_date = session.end.with_timezone(&Local).date_naive();
-    start_date == today || end_date == today
 }
 
 #[cfg(test)]
