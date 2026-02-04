@@ -4,9 +4,9 @@ updated: 2026-02-04
 ---
 # Feature: Refresh Loop
 
-**Status:** In Progress\
+**Status:** Complete\
 **Started:** 2026-02-04\
-**Completed:** —
+**Completed:** 2026-02-04
 
 ---
 
@@ -54,12 +54,12 @@ The spinner character cycles continuously. When a refresh completes, data update
 
 ## Success Criteria
 
-- [ ] App refreshes data automatically every N seconds
-- [ ] Spinner animates smoothly in the header (no stuttering)
-- [ ] `r` triggers immediate refresh
-- [ ] Time totals update as new session activity occurs
-- [ ] `q` still exits cleanly
-- [ ] No visible flicker or glitching during refresh
+- [x] App refreshes data automatically every N seconds
+- [x] Spinner animates smoothly in the header (no stuttering)
+- [x] `r` triggers immediate refresh
+- [x] Time totals update as new session activity occurs
+- [x] `q` still exits cleanly
+- [x] No visible flicker or glitching during refresh
 
 ---
 
@@ -92,12 +92,12 @@ The spinner character cycles continuously. When a refresh completes, data update
 
 ## High-Level Todo
 
-- [ ] Refactor event loop to tick-based (support both input events and timer ticks)
-- [ ] Add spinner state and render animated spinner in header
-- [ ] Add periodic data refresh on configurable interval
-- [ ] Add `r` key handler for manual refresh
-- [ ] Verify smooth animation and clean data updates
-- [ ] Test with real session activity (watch totals increment)
+- [x] Refactor event loop to tick-based (support both input events and timer ticks)
+- [x] Add spinner state and render animated spinner in header
+- [x] Add periodic data refresh on configurable interval
+- [x] Add `r` key handler for manual refresh
+- [x] Verify smooth animation and clean data updates
+- [x] Test with real session activity (watch totals increment)
 
 ---
 
@@ -110,6 +110,10 @@ Considered file watching (notify crate) vs simple timer polling. Timer is simple
 ### 2026-02-04 - Spinner choice
 
 Braille dots (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) chosen for smooth 10-frame animation. Alternatives considered: `|/-\` (too simple), block characters (too chunky). Braille gives a nice "working" feel without being distracting.
+
+### 2026-02-04 - Event queue draining
+
+Initial implementation had input lag when pressing `q` after rapid `r` presses. Each `r` triggered a full refresh cycle, and keypresses queued up. Fixed by draining all pending events before starting a refresh, checking each for `q` to allow immediate exit. Spinner also resets to frame 0 on `r` to give visual feedback that the refresh was acknowledged.
 
 ---
 

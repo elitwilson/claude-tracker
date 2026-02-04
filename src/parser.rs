@@ -1,9 +1,18 @@
 use chrono::{DateTime, Local, NaiveDate, TimeDelta, Utc};
 
+#[derive(Debug, PartialEq)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+}
+
 #[derive(Debug)]
 pub struct ParsedMessage {
     pub timestamp: DateTime<Utc>,
     pub cwd: Option<String>,
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug)]
@@ -12,6 +21,10 @@ pub struct Session {
     pub end: DateTime<Utc>,
     pub duration: TimeDelta,
     pub project: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
 }
 
 /// Parse a single JSONL line into a ParsedMessage.
@@ -26,7 +39,24 @@ pub fn parse_message(line: &str) -> Option<ParsedMessage> {
             let timestamp_str = value.get("timestamp")?.as_str()?;
             let timestamp: DateTime<Utc> = timestamp_str.parse().ok()?;
             let cwd = value.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
-            Some(ParsedMessage { timestamp, cwd })
+            let usage = value
+                .get("message")
+                .and_then(|m| m.get("usage"))
+                .and_then(|u| {
+                    Some(TokenUsage {
+                        input_tokens: u.get("input_tokens")?.as_u64()?,
+                        output_tokens: u.get("output_tokens")?.as_u64()?,
+                        cache_creation_input_tokens: u
+                            .get("cache_creation_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        cache_read_input_tokens: u
+                            .get("cache_read_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                    })
+                });
+            Some(ParsedMessage { timestamp, cwd, usage })
         }
         _ => None,
     }
@@ -55,11 +85,20 @@ pub fn assemble_session(messages: &[ParsedMessage], idle_threshold: TimeDelta) -
         .unwrap_or("")
         .to_string();
 
+    let input_tokens: u64 = messages.iter().filter_map(|m| m.usage.as_ref()).map(|u| u.input_tokens).sum();
+    let output_tokens: u64 = messages.iter().filter_map(|m| m.usage.as_ref()).map(|u| u.output_tokens).sum();
+    let cache_creation_input_tokens: u64 = messages.iter().filter_map(|m| m.usage.as_ref()).map(|u| u.cache_creation_input_tokens).sum();
+    let cache_read_input_tokens: u64 = messages.iter().filter_map(|m| m.usage.as_ref()).map(|u| u.cache_read_input_tokens).sum();
+
     Some(Session {
         start,
         end,
         duration,
         project,
+        input_tokens,
+        output_tokens,
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
     })
 }
 

@@ -29,6 +29,40 @@ const ASSISTANT_MESSAGE: &str = r#"{
     "parentUuid": "602ff260-e1a6-489f-b3cc-9ec2dac08e6a"
 }"#;
 
+// Assistant message with all four token usage fields (including cache).
+const ASSISTANT_MESSAGE_WITH_CACHE: &str = r#"{
+    "type": "assistant",
+    "timestamp": "2026-02-03T17:37:10.000Z",
+    "cwd": "/Users/etwilson/workdev/tools/make-it-so-cli",
+    "sessionId": "8e17c8fc-560f-43be-9e19-c99b6a6da169",
+    "message": {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Sure thing"}],
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_creation_input_tokens": 200,
+            "cache_read_input_tokens": 300
+        }
+    },
+    "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "parentUuid": "602ff260-e1a6-489f-b3cc-9ec2dac08e6a"
+}"#;
+
+// Assistant message with no usage field at all — edge case.
+const ASSISTANT_MESSAGE_NO_USAGE: &str = r#"{
+    "type": "assistant",
+    "timestamp": "2026-02-03T17:37:15.000Z",
+    "cwd": "/Users/etwilson/workdev/tools/make-it-so-cli",
+    "sessionId": "8e17c8fc-560f-43be-9e19-c99b6a6da169",
+    "message": {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Done"}]
+    },
+    "uuid": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+    "parentUuid": "602ff260-e1a6-489f-b3cc-9ec2dac08e6a"
+}"#;
+
 const QUEUE_OPERATION: &str = r#"{
     "type": "queue-operation",
     "operation": "dequeue",
@@ -88,10 +122,12 @@ fn calculates_session_duration() {
         ParsedMessage {
             timestamp: "2026-02-03T10:00:00Z".parse().unwrap(),
             cwd: Some("/Users/etwilson/workdev/project".to_string()),
+            usage: None,
         },
         ParsedMessage {
             timestamp: "2026-02-03T10:05:30Z".parse().unwrap(),
             cwd: Some("/Users/etwilson/workdev/project".to_string()),
+            usage: None,
         },
     ];
 
@@ -117,6 +153,7 @@ fn msg(timestamp: &str) -> ParsedMessage {
     ParsedMessage {
         timestamp: timestamp.parse().unwrap(),
         cwd: Some("/work/project".to_string()),
+        usage: None,
     }
 }
 
@@ -175,6 +212,10 @@ fn session_today_is_included() {
         end,
         duration: end - start,
         project: "/test".to_string(),
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
     };
 
     assert!(is_today(&session, today));
@@ -192,6 +233,10 @@ fn session_yesterday_is_excluded() {
         end,
         duration: end - start,
         project: "/test".to_string(),
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
     };
 
     assert!(!is_today(&session, today));
@@ -210,7 +255,108 @@ fn session_spanning_midnight_is_included() {
         end,
         duration: end - start,
         project: "/test".to_string(),
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
     };
 
     assert!(is_today(&session, today));
+}
+
+// --- Token usage tests --------------------------------------------------
+
+#[test]
+fn extracts_token_usage_from_assistant_message() {
+    let msg = parse_message(ASSISTANT_MESSAGE_WITH_CACHE).unwrap();
+
+    assert_eq!(
+        msg.usage,
+        Some(TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 200,
+            cache_read_input_tokens: 300,
+        })
+    );
+}
+
+#[test]
+fn user_message_has_no_token_usage() {
+    let msg = parse_message(USER_MESSAGE).unwrap();
+
+    assert!(msg.usage.is_none());
+}
+
+#[test]
+fn assistant_message_without_usage_field_returns_none() {
+    let msg = parse_message(ASSISTANT_MESSAGE_NO_USAGE).unwrap();
+
+    assert!(msg.usage.is_none());
+}
+
+#[test]
+fn assemble_session_sums_token_usage() {
+    let messages = vec![
+        ParsedMessage {
+            timestamp: "2026-02-03T10:00:00Z".parse().unwrap(),
+            cwd: Some("/work/project".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: 200,
+                cache_read_input_tokens: 300,
+            }),
+        },
+        ParsedMessage {
+            timestamp: "2026-02-03T10:05:00Z".parse().unwrap(),
+            cwd: Some("/work/project".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: 50,
+                output_tokens: 25,
+                cache_creation_input_tokens: 100,
+                cache_read_input_tokens: 150,
+            }),
+        },
+    ];
+
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
+
+    assert_eq!(session.input_tokens, 150);
+    assert_eq!(session.output_tokens, 75);
+    assert_eq!(session.cache_creation_input_tokens, 300);
+    assert_eq!(session.cache_read_input_tokens, 450);
+}
+
+#[test]
+fn assemble_session_ignores_messages_without_usage() {
+    let messages = vec![
+        ParsedMessage {
+            timestamp: "2026-02-03T10:00:00Z".parse().unwrap(),
+            cwd: Some("/work/project".to_string()),
+            usage: None,
+        },
+        ParsedMessage {
+            timestamp: "2026-02-03T10:05:00Z".parse().unwrap(),
+            cwd: Some("/work/project".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            }),
+        },
+        ParsedMessage {
+            timestamp: "2026-02-03T10:06:00Z".parse().unwrap(),
+            cwd: Some("/work/project".to_string()),
+            usage: None,
+        },
+    ];
+
+    let session = assemble_session(&messages, TimeDelta::minutes(15)).unwrap();
+
+    assert_eq!(session.input_tokens, 100);
+    assert_eq!(session.output_tokens, 50);
+    assert_eq!(session.cache_creation_input_tokens, 0);
+    assert_eq!(session.cache_read_input_tokens, 0);
 }
