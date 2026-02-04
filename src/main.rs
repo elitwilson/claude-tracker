@@ -1,6 +1,7 @@
 mod parser;
 mod scanner;
 mod spinner;
+mod store;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeDelta, Utc};
@@ -166,7 +167,42 @@ fn total_input(s: &ProjectSummary) -> u64 {
 
 // --- Rendering ----------------------------------------------------------
 
-fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner) {
+enum PendingAction {
+    Quit,
+    Config,
+}
+
+enum KeyOutcome {
+    Quit,
+    OpenConfig,
+    Continue,
+}
+
+/// Dispatch a keypress against the pending-action state.
+/// Confirms or cancels a pending action on Enter / any-other-key,
+/// and arms the initial 'q' → Quit when nothing is pending.
+fn handle_key(pending: &mut Option<PendingAction>, code: KeyCode) -> KeyOutcome {
+    if pending.is_some() {
+        match code {
+            KeyCode::Enter => match pending.take() {
+                Some(PendingAction::Quit) => KeyOutcome::Quit,
+                Some(PendingAction::Config) => KeyOutcome::OpenConfig,
+                None => unreachable!(),
+            },
+            _ => {
+                *pending = None;
+                KeyOutcome::Continue
+            }
+        }
+    } else if code == KeyCode::Char('q') {
+        *pending = Some(PendingAction::Quit);
+        KeyOutcome::Continue
+    } else {
+        KeyOutcome::Continue
+    }
+}
+
+fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner, pending: &Option<PendingAction>) {
     let most_recent_idx = summaries
         .iter()
         .enumerate()
@@ -259,9 +295,13 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinne
     );
 
     // Footer
+    let (footer_text, footer_style) = match pending {
+        Some(PendingAction::Quit) => ("  Quit? Press Enter to confirm", Style::new()),
+        Some(PendingAction::Config) => ("  Open config? Press Enter to confirm", Style::new()),
+        None => ("  r refresh · c config · q quit", Style::new().dim()),
+    };
     f.render_widget(
-        Paragraph::new("  r refresh · c config · q quit")
-            .style(Style::new().dim()),
+        Paragraph::new(footer_text).style(footer_style),
         chunks[6],
     );
 }
@@ -284,7 +324,11 @@ fn teardown(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
 
 // --- Data loading -------------------------------------------------------
 
-fn load_sessions(projects_dir: &Path, idle_threshold: TimeDelta) -> Result<Vec<parser::Session>> {
+fn load_sessions(
+    projects_dir: &Path,
+    idle_threshold: TimeDelta,
+    store: &store::Store,
+) -> Result<Vec<parser::Session>> {
     let session_files = scanner::find_session_files(projects_dir);
     let today = Local::now().date_naive();
     let mut sessions = Vec::new();
@@ -299,6 +343,13 @@ fn load_sessions(projects_dir: &Path, idle_threshold: TimeDelta) -> Result<Vec<p
             .collect();
 
         if let Some(session) = parser::assemble_session(&messages, idle_threshold) {
+            let source_path = file_path
+                .strip_prefix(projects_dir)
+                .with_context(|| format!("stripping prefix from {:?}", file_path))?
+                .to_str()
+                .context("non-UTF8 path")?;
+            store.upsert(source_path, &session)?;
+
             if parser::is_today(&session, today) {
                 sessions.push(session);
             }
@@ -323,7 +374,10 @@ fn main() -> Result<()> {
     let config = load_config()?;
     let idle_threshold = TimeDelta::minutes(config.idle_timeout_minutes as i64);
 
-    let sessions = load_sessions(&projects_dir, idle_threshold)?;
+    let db_path = config_path()?.with_file_name("sessions.db");
+    let store = store::Store::new(&db_path)?;
+
+    let sessions = load_sessions(&projects_dir, idle_threshold, &store)?;
 
     if sessions.is_empty() {
         println!("No sessions today.");
@@ -345,36 +399,55 @@ fn main() -> Result<()> {
     let mut term = setup()?;
 
     let mut needs_refresh = false;
+    let mut pending: Option<PendingAction> = None;
 
     loop {
-        term.draw(|f| render(f, &summaries, &spinner))?;
+        term.draw(|f| render(f, &summaries, &spinner, &pending))?;
 
         if event::poll(TICK_RATE)? {
-            match event::read()? {
-                Event::Key(k) if k.code == KeyCode::Char('q') => break,
-                Event::Key(k) if k.code == KeyCode::Char('r') => {
-                    spinner.reset();
-                    needs_refresh = true;
+            if let Event::Key(k) = event::read()? {
+                let had_pending = pending.is_some();
+                match handle_key(&mut pending, k.code) {
+                    KeyOutcome::Quit => break,
+                    KeyOutcome::OpenConfig => {
+                        teardown(&mut term)?;
+                        open_config_in_editor()?;
+                        return Ok(());
+                    }
+                    // Only process r/c when the key wasn't consumed by pending logic.
+                    KeyOutcome::Continue if !had_pending => match k.code {
+                        KeyCode::Char('r') => {
+                            spinner.reset();
+                            needs_refresh = true;
+                        }
+                        KeyCode::Char('c') => {
+                            pending = Some(PendingAction::Config);
+                        }
+                        _ => {}
+                    },
+                    _ => {}
                 }
-                Event::Key(k) if k.code == KeyCode::Char('c') => {
-                    teardown(&mut term)?;
-                    open_config_in_editor()?;
-                    return Ok(());
-                }
-                _ => {}
             }
         }
 
         spinner.tick();
 
         if needs_refresh || last_refresh.elapsed() >= REFRESH_INTERVAL {
-            // Drain event queue before expensive refresh, checking for quit
+            // Drain event queue before expensive refresh
             let mut should_quit = false;
             while event::poll(Duration::ZERO)? {
                 if let Event::Key(k) = event::read()? {
-                    if k.code == KeyCode::Char('q') {
-                        should_quit = true;
-                        break;
+                    match handle_key(&mut pending, k.code) {
+                        KeyOutcome::Quit => {
+                            should_quit = true;
+                            break;
+                        }
+                        KeyOutcome::OpenConfig => {
+                            teardown(&mut term)?;
+                            open_config_in_editor()?;
+                            return Ok(());
+                        }
+                        KeyOutcome::Continue => {}
                     }
                 }
             }
@@ -382,7 +455,7 @@ fn main() -> Result<()> {
                 break;
             }
 
-            let sessions = load_sessions(&projects_dir, idle_threshold)?;
+            let sessions = load_sessions(&projects_dir, idle_threshold, &store)?;
             summaries = aggregate_sessions(&sessions);
             last_refresh = Instant::now();
             needs_refresh = false;
