@@ -4,9 +4,9 @@ updated: 2026-02-03
 ---
 # Feature: Display Mockup
 
-**Status:** In Progress\
+**Status:** Complete\
 **Started:** 2026-02-03\
-**Completed:** TBD
+**Completed:** 2026-02-04
 
 ---
 
@@ -60,11 +60,11 @@ claude-tracker  ↻ --
 
 ## Success Criteria
 
-- [ ] `cargo run` opens alternate screen with the target layout
-- [ ] Projects are grouped correctly with accurate total durations
-- [ ] Most-recently-active project is marked
-- [ ] Layout looks right against real data (eyeball check)
-- [ ] `q` exits cleanly, terminal is restored
+- [x] `cargo run` opens alternate screen with the target layout
+- [x] Projects are grouped correctly with accurate total durations
+- [x] Most-recently-active project is marked
+- [x] Layout looks right against real data (eyeball check)
+- [x] `q` exits cleanly, terminal is restored
 
 ---
 

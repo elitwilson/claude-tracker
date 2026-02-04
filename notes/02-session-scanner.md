@@ -32,7 +32,7 @@ A Rust module that scans `~/.claude/projects/` for today's session files, parses
 - Matches only `<uuid>.jsonl` files — skips `agent-*` files and bare UUID directories
 - Parses JSONL line-by-line; only cares about `user` and `assistant` message types
 - Extracts `timestamp` and `cwd` from those messages
-- Session duration = last timestamp minus first timestamp in the file
+- Session duration = sum of consecutive-message gaps below the idle threshold (gaps ≥ threshold are idle and excluded)
 - Project identity = `cwd` from the first user/assistant message
 - Filters to sessions with activity today (local calendar day)
 - Skips files with no user/assistant messages (effectively empty sessions)
@@ -107,6 +107,14 @@ A Rust module that scans `~/.claude/projects/` for today's session files, parses
 ### 2026-02-03 - Real-data validation
 
 Ran against actual `~/.claude/projects/` — 17 sessions, 262m total across 4 projects. Output matched expectations for a full coding day. Notable: several sessions show 0m duration (start == end within the same minute). These are real — single-message sessions where the user opened Claude Code but the conversation was very short. They survive the parser cleanly (not filtered as empty, since they do have user/assistant messages) and show up as 0m. Acceptable for now; worth revisiting if the TUI needs to handle them differently.
+
+### 2026-02-04 - Idle timeout added to duration calculation
+
+Duration was originally `end - start` (wall clock). Long conversations with idle gaps
+(e.g. lunch break mid-session) inflated totals visibly. Changed `assemble_session` to
+walk consecutive message gaps and exclude any gap ≥ a configurable idle threshold
+(default 15 min). Threshold is loaded from `~/.config/claude-tracker/config.toml`.
+Rest of the pipeline (aggregation, display) was unchanged.
 
 ### 2026-02-03 - Why data layer first
 

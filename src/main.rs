@@ -1,5 +1,6 @@
 mod parser;
 mod scanner;
+mod spinner;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeDelta, Utc};
@@ -97,7 +98,7 @@ fn last_segment(path: &str) -> &str {
 const NOW_MARKER: &str = "  ← now";
 const NOW_MARKER_COLS: usize = 7; // "← " is 1 display column despite 3 UTF-8 bytes
 
-fn render(f: &mut Frame, summaries: &[ProjectSummary]) {
+fn render(f: &mut Frame, summaries: &[ProjectSummary], spinner: &spinner::Spinner) {
     let width = f.area().width as usize;
 
     let most_recent_idx = summaries
@@ -110,7 +111,7 @@ fn render(f: &mut Frame, summaries: &[ProjectSummary]) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    lines.push(Line::from("claude-tracker  ↻ --"));
+    lines.push(Line::from(format!("claude-tracker  {}", spinner.current())));
     lines.push(Line::from(""));
 
     for (i, summary) in summaries.iter().enumerate() {
@@ -161,16 +162,10 @@ fn teardown(term: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     Ok(())
 }
 
-// --- Entry point --------------------------------------------------------
+// --- Data loading -------------------------------------------------------
 
-fn main() -> Result<()> {
-    let home = std::env::var("HOME").context("HOME env var not set")?;
-    let projects_dir = Path::new(&home).join(".claude").join("projects");
-
-    let config = load_config()?;
-    let idle_threshold = TimeDelta::minutes(config.idle_timeout_minutes as i64);
-
-    let session_files = scanner::find_session_files(&projects_dir);
+fn load_sessions(projects_dir: &Path, idle_threshold: TimeDelta) -> Result<Vec<parser::Session>> {
+    let session_files = scanner::find_session_files(projects_dir);
     let today = Local::now().date_naive();
     let mut sessions = Vec::new();
 
@@ -190,12 +185,33 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(sessions)
+}
+
+// --- Entry point --------------------------------------------------------
+
+use std::time::{Duration, Instant};
+
+const TICK_RATE: Duration = Duration::from_millis(100);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+fn main() -> Result<()> {
+    let home = std::env::var("HOME").context("HOME env var not set")?;
+    let projects_dir = Path::new(&home).join(".claude").join("projects");
+
+    let config = load_config()?;
+    let idle_threshold = TimeDelta::minutes(config.idle_timeout_minutes as i64);
+
+    let sessions = load_sessions(&projects_dir, idle_threshold)?;
+
     if sessions.is_empty() {
         println!("No sessions today.");
         return Ok(());
     }
 
-    let summaries = aggregate_sessions(&sessions);
+    let mut summaries = aggregate_sessions(&sessions);
+    let mut spinner = spinner::Spinner::new();
+    let mut last_refresh = Instant::now();
 
     // Restore terminal on panic so we don't leave alternate screen active
     let hook = std::panic::take_hook();
@@ -206,12 +222,44 @@ fn main() -> Result<()> {
     }));
 
     let mut term = setup()?;
-    term.draw(|f| render(f, &summaries))?;
+
+    let mut needs_refresh = false;
 
     loop {
-        match event::read()? {
-            Event::Key(k) if k.code == KeyCode::Char('q') => break,
-            _ => {}
+        term.draw(|f| render(f, &summaries, &spinner))?;
+
+        if event::poll(TICK_RATE)? {
+            match event::read()? {
+                Event::Key(k) if k.code == KeyCode::Char('q') => break,
+                Event::Key(k) if k.code == KeyCode::Char('r') => {
+                    spinner.reset();
+                    needs_refresh = true;
+                }
+                _ => {}
+            }
+        }
+
+        spinner.tick();
+
+        if needs_refresh || last_refresh.elapsed() >= REFRESH_INTERVAL {
+            // Drain event queue before expensive refresh, checking for quit
+            let mut should_quit = false;
+            while event::poll(Duration::ZERO)? {
+                if let Event::Key(k) = event::read()? {
+                    if k.code == KeyCode::Char('q') {
+                        should_quit = true;
+                        break;
+                    }
+                }
+            }
+            if should_quit {
+                break;
+            }
+
+            let sessions = load_sessions(&projects_dir, idle_threshold)?;
+            summaries = aggregate_sessions(&sessions);
+            last_refresh = Instant::now();
+            needs_refresh = false;
         }
     }
 
