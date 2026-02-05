@@ -3,6 +3,7 @@ mod scanner;
 mod spinner;
 mod secrets;
 mod store;
+mod sync;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
@@ -35,12 +36,12 @@ idle_timeout_minutes = 15
 "#;
 
 #[derive(serde::Deserialize)]
-struct SyncConfig {
-    workspace_id: String,
-    other_project_id: String,
-    work_day_start: String,
-    work_day_end: String,
-    project_mapping: HashMap<String, String>,
+pub(crate) struct SyncConfig {
+    pub(crate) workspace_id: String,
+    pub(crate) other_project_id: Option<String>,
+    pub(crate) work_day_start: String,
+    pub(crate) work_day_end: String,
+    pub(crate) project_mapping: HashMap<String, String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -199,7 +200,7 @@ fn aggregate_sessions(sessions: &[parser::Session]) -> Vec<ProjectSummary> {
     summaries
 }
 
-fn last_segment(path: &str) -> &str {
+pub(crate) fn last_segment(path: &str) -> &str {
     Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
@@ -724,7 +725,7 @@ work_day_end = "17:00"
         let sync = config.sync.as_ref().unwrap();
 
         assert_eq!(sync.workspace_id, "ws-123");
-        assert_eq!(sync.other_project_id, "proj-other");
+        assert_eq!(sync.other_project_id.as_deref(), Some("proj-other"));
         assert_eq!(sync.work_day_start, "09:00");
         assert_eq!(sync.work_day_end, "17:00");
     }

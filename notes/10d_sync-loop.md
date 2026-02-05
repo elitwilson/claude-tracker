@@ -5,7 +5,7 @@ updated: 2026-02-04
 # 10d: Sync Loop
 
 **Parent:** [10-clockify-sync.md](10-clockify-sync.md)\
-**Status:** Todo — blocked on open questions\
+**Status:** Todo\
 **Depends on:** 10a, 10b, 10c
 
 ---
@@ -23,12 +23,11 @@ For each workday (M-F) in the sync date range, up through yesterday:
 5. For each allocation: check `synced_entries` (10a); if not already posted, POST via 10c; record returned entry ID in `synced_entries`
 6. After all allocations for the day succeed, mark day complete in `synced_days` (10a)
 
-## Open Questions
+## Design Decisions
 
-Must be decided before implementation:
+**Sync date range:** Start from the earliest session date in the DB. Sync everything that's not already synced. Simple and complete — no configuration needed.
 
-1. **Sync date range — what is the start boundary?** Options: earliest session date in the DB, a configured `sync_from` date in `[sync]`, or bounded some other way. Affects how far back sync looks on first run and on every subsequent run.
-2. **Error handling — stop or continue?** If a POST fails mid-sync, does the loop abort entirely, or continue through remaining days and report all failures at the end? Stop-on-error is simpler; continue-and-collect is more resilient for multi-day syncs.
+**Error handling:** Stop on first error. Simpler to reason about, and because the sync is idempotent, subsequent runs will fill in gaps after the error is resolved.
 
 ## Integration Points
 
@@ -44,7 +43,7 @@ Must be decided before implementation:
 - [ ] Already-synced days are skipped (zero duplicate POSTs)
 - [ ] Zero-session days are skipped without being marked synced
 - [ ] A partial failure on a day is recoverable on next run (per 10a)
-- [ ] Open questions (date range, error handling) are decided and documented
+- [x] Open questions (date range, error handling) are decided and documented
 
 ## Important Considerations
 
@@ -54,7 +53,7 @@ Must be decided before implementation:
 
 ## Todo
 
-- [ ] Decide open questions (date range start, error handling)
+- [x] Decide open questions (date range start, error handling)
 - [ ] Implement sync loop
 - [ ] Wire as `claude-tracker sync` subcommand in main.rs
 - [ ] Integration test: sync multiple days end-to-end

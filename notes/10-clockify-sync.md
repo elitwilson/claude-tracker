@@ -46,8 +46,8 @@ work_day_start = "09:00"   # local time
 work_day_end = "17:00"     # local time
 
 [sync.project_mapping]
-# local project name → Clockify project ID
-"claude-tracker" = "65b2d73e06de527a7ed67403"
+# local project full path → Clockify project ID
+"/Users/etwilson/workdev/tools/claude-tracker" = "65b2d73e06de527a7ed67403"
 ```
 
 Work day is M-F only. Start/end are local times; conversion to UTC happens at POST time.
@@ -121,7 +121,7 @@ On retry, complete days are skipped. Incomplete days skip already-posted entries
 - [x] Decide idempotency mechanism
 - [ ] Extend config.toml: workspace_id, other_project_id, work_day_start/end, project_mapping
 - [ ] Add `ureq` to Cargo.toml
-- [ ] Implement transformation: sessions → ratio-based daily allocations
+- [x] Implement transformation: sessions → ratio-based daily allocations
 - [ ] Implement sync: read config + DB, transform, POST to Clockify
 - [ ] Wire `sync` subcommand into main.rs
 - [ ] Test: single day sync, verify entries appear in Clockify
