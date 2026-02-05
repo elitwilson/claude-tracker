@@ -453,14 +453,24 @@ fn run_setup() -> Result<()> {
 fn main() -> Result<()> {
     let cli = Command::new("claude-tracker")
         .subcommand(Command::new("setup").about("Store secrets in the OS keychain"))
-        .subcommand(Command::new("sync").about("Sync tracked time to Clockify"));
+        .subcommand(
+            Command::new("sync")
+                .about("Sync tracked time to Clockify")
+                .arg(
+                    clap::Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show what would be synced without posting to Clockify")
+                        .action(clap::ArgAction::SetTrue)
+                )
+        )
+        .subcommand(Command::new("list-projects").about("List all Clockify projects with their IDs"));
     let matches = cli.get_matches();
 
     if matches.subcommand_matches("setup").is_some() {
         return run_setup();
     }
 
-    if matches.subcommand_matches("sync").is_some() {
+    if let Some(sync_matches) = matches.subcommand_matches("sync") {
         ensure_config_exists()?;
         let config = load_config()?;
         let sync_config = config.sync.context("Missing [sync] section in config.toml")?;
@@ -468,7 +478,49 @@ fn main() -> Result<()> {
         let db_path = config_path()?.with_file_name("sessions.db");
         let store = store::Store::new(&db_path)?;
 
-        return sync::run_sync(&store, &sync_config);
+        let dry_run = sync_matches.get_flag("dry-run");
+
+        return sync::run_sync(&store, &sync_config, dry_run);
+    }
+
+    if matches.subcommand_matches("list-projects").is_some() {
+        ensure_config_exists()?;
+        let config = load_config()?;
+        let sync_config = config.sync.context("Missing [sync] section in config.toml. Add workspace_id to use list-projects.")?;
+
+        let projects = clockify::list_projects(&sync_config.workspace_id)?;
+
+        // Build reverse map: clockify_project_id -> local_path
+        let mut mapped_ids: HashMap<String, String> = HashMap::new();
+        for (local_path, clockify_id) in &sync_config.project_mapping {
+            mapped_ids.insert(clockify_id.clone(), local_path.clone());
+        }
+
+        println!("# Clockify Projects");
+        println!("# Workspace: {}\n", sync_config.workspace_id);
+        println!("# Copy lines into your config.toml under [sync.project_mapping]");
+        println!("# Format: \"local_project_path\" = \"clockify_project_id\"\n");
+
+        if !mapped_ids.is_empty() {
+            println!("# --- Already Mapped ---");
+            for project in &projects {
+                if let Some(local_path) = mapped_ids.get(&project.id) {
+                    let status = if project.archived { " (ARCHIVED)" } else { "" };
+                    println!("\"{}\" = \"{}\"  # {}{}", local_path, project.id, project.name, status);
+                }
+            }
+            println!();
+        }
+
+        println!("# --- Available Projects ---");
+        for project in &projects {
+            if !mapped_ids.contains_key(&project.id) {
+                let status = if project.archived { " (ARCHIVED)" } else { "" };
+                println!("# \"YOUR_LOCAL_PATH_HERE\" = \"{}\"  # {}{}", project.id, project.name, status);
+            }
+        }
+
+        return Ok(());
     }
 
     let home = std::env::var("HOME").context("HOME env var not set")?;

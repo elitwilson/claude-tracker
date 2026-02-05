@@ -163,7 +163,7 @@ pub(crate) fn is_weekday(date: NaiveDate) -> bool {
 }
 
 /// Run the sync loop: process all unsynced workdays from earliest session to yesterday
-pub fn run_sync(store: &Store, config: &SyncConfig) -> Result<()> {
+pub fn run_sync(store: &Store, config: &SyncConfig, dry_run: bool) -> Result<()> {
     // Get earliest session date
     let start_date = match store.earliest_session_date()? {
         Some(date) => date,
@@ -182,7 +182,11 @@ pub fn run_sync(store: &Store, config: &SyncConfig) -> Result<()> {
         return Ok(());
     }
 
-    println!("Syncing workdays from {} to {}...", start_date, yesterday);
+    if dry_run {
+        println!("[DRY RUN] Would sync workdays from {} to {}...", start_date, yesterday);
+    } else {
+        println!("Syncing workdays from {} to {}...", start_date, yesterday);
+    }
 
     let mut total_days = 0;
     let mut total_entries = 0;
@@ -223,46 +227,72 @@ pub fn run_sync(store: &Store, config: &SyncConfig) -> Result<()> {
         let alloc_result = allocate(&sessions, config, current_date)?;
 
         if alloc_result.allocations.is_empty() {
-            println!("  {} - no allocations (all projects skipped)", date_str);
+            if dry_run {
+                println!("  [DRY RUN] {} - no allocations (all projects skipped)", date_str);
+            } else {
+                println!("  {} - no allocations (all projects skipped)", date_str);
+            }
             current_date = current_date.succ_opt().context("Date overflow")?;
             continue;
         }
 
         // POST each allocation
-        print!("  {} - syncing", date_str);
-        let mut day_entries = 0;
+        if dry_run {
+            println!("  [DRY RUN] {} - would post {} entries:", date_str, alloc_result.allocations.len());
+            for allocation in &alloc_result.allocations {
+                let duration = allocation.end - allocation.start;
+                let hours = duration.num_minutes() as f64 / 60.0;
+                println!(
+                    "    • project_id {}: {} - {} ({:.1}h)",
+                    allocation.project_id,
+                    allocation.start.format("%H:%M"),
+                    allocation.end.format("%H:%M"),
+                    hours
+                );
+            }
+            total_days += 1;
+            total_entries += alloc_result.allocations.len();
+        } else {
+            print!("  {} - syncing", date_str);
+            let mut day_entries = 0;
 
-        for allocation in &alloc_result.allocations {
-            // Check per-entry idempotency
-            if store.is_entry_synced(&date_str, &config.workspace_id, &allocation.project_id)? {
-                continue;
+            for allocation in &alloc_result.allocations {
+                // Check per-entry idempotency
+                if store.is_entry_synced(&date_str, &config.workspace_id, &allocation.project_id)? {
+                    continue;
+                }
+
+                // POST to Clockify
+                let entry_id = crate::clockify::post_time_entry(
+                    &allocation.project_id,
+                    allocation.start,
+                    allocation.end,
+                    &config.workspace_id,
+                )
+                .with_context(|| format!("Failed to post entry for project_id: {}", allocation.project_id))?;
+
+                // Record entry
+                store.mark_entry_synced(&date_str, &config.workspace_id, &allocation.project_id, &entry_id)?;
+                day_entries += 1;
             }
 
-            // POST to Clockify
-            let entry_id = crate::clockify::post_time_entry(
-                &allocation.project_id,
-                allocation.start,
-                allocation.end,
-                &config.workspace_id,
-            )?;
+            // Mark day complete
+            store.mark_day_synced(&date_str, &config.workspace_id)?;
 
-            // Record entry
-            store.mark_entry_synced(&date_str, &config.workspace_id, &allocation.project_id, &entry_id)?;
-            day_entries += 1;
+            println!(" - {} entries posted", day_entries);
+            total_days += 1;
+            total_entries += day_entries;
         }
-
-        // Mark day complete
-        store.mark_day_synced(&date_str, &config.workspace_id)?;
-
-        println!(" - {} entries posted", day_entries);
-        total_days += 1;
-        total_entries += day_entries;
 
         current_date = current_date.succ_opt().context("Date overflow")?;
     }
 
     println!("---");
-    println!("Synced {} days, {} total entries", total_days, total_entries);
+    if dry_run {
+        println!("[DRY RUN] Would sync {} days, {} total entries", total_days, total_entries);
+    } else {
+        println!("Synced {} days, {} total entries", total_days, total_entries);
+    }
 
     Ok(())
 }
