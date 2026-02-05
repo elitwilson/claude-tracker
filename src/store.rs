@@ -25,6 +25,18 @@ impl Store {
                  output_tokens                INTEGER NOT NULL DEFAULT 0,
                  cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
                  cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS synced_days (
+                 date         TEXT NOT NULL,
+                 workspace_id TEXT NOT NULL,
+                 PRIMARY KEY (date, workspace_id)
+             );
+             CREATE TABLE IF NOT EXISTS synced_entries (
+                 date              TEXT NOT NULL,
+                 workspace_id      TEXT NOT NULL,
+                 project_id        TEXT NOT NULL,
+                 clockify_entry_id TEXT NOT NULL,
+                 PRIMARY KEY (date, workspace_id, project_id)
              );",
         )
         .context("initializing database")?;
@@ -105,6 +117,46 @@ impl Store {
         }
 
         Ok(sessions)
+    }
+
+    // --- sync tracking ----------------------------------------------------
+
+    pub fn is_day_synced(&self, date: &str, workspace_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM synced_days WHERE date = ?1 AND workspace_id = ?2",
+            rusqlite::params![date, workspace_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn mark_day_synced(&self, date: &str, workspace_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO synced_days (date, workspace_id) VALUES (?1, ?2)",
+                rusqlite::params![date, workspace_id],
+            )
+            .context("marking day synced")?;
+        Ok(())
+    }
+
+    pub fn is_entry_synced(&self, date: &str, workspace_id: &str, project_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM synced_entries WHERE date = ?1 AND workspace_id = ?2 AND project_id = ?3",
+            rusqlite::params![date, workspace_id, project_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn mark_entry_synced(&self, date: &str, workspace_id: &str, project_id: &str, clockify_entry_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO synced_entries (date, workspace_id, project_id, clockify_entry_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![date, workspace_id, project_id, clockify_entry_id],
+            )
+            .context("marking entry synced")?;
+        Ok(())
     }
 }
 

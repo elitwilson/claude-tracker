@@ -35,9 +35,19 @@ idle_timeout_minutes = 15
 "#;
 
 #[derive(serde::Deserialize)]
+struct SyncConfig {
+    workspace_id: String,
+    other_project_id: String,
+    work_day_start: String,
+    work_day_end: String,
+    project_mapping: HashMap<String, String>,
+}
+
+#[derive(serde::Deserialize)]
 struct Config {
     #[serde(default = "default_idle_timeout_minutes")]
     idle_timeout_minutes: u64,
+    sync: Option<SyncConfig>,
 }
 
 fn default_idle_timeout_minutes() -> u64 {
@@ -48,6 +58,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             idle_timeout_minutes: default_idle_timeout_minutes(),
+            sync: None,
         }
     }
 }
@@ -691,6 +702,63 @@ mod tests {
     #[test]
     fn formats_exact_thousand() {
         assert_eq!(format_tokens(1000), "1k");
+    }
+
+    // --- SyncConfig parsing --------------------------------------------------
+
+    #[test]
+    fn parses_complete_sync_config() {
+        let toml = r#"
+idle_timeout_minutes = 15
+
+[sync]
+workspace_id = "ws-123"
+other_project_id = "proj-other"
+work_day_start = "09:00"
+work_day_end = "17:00"
+
+[sync.project_mapping]
+"claude-tracker" = "proj-ct"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let sync = config.sync.as_ref().unwrap();
+
+        assert_eq!(sync.workspace_id, "ws-123");
+        assert_eq!(sync.other_project_id, "proj-other");
+        assert_eq!(sync.work_day_start, "09:00");
+        assert_eq!(sync.work_day_end, "17:00");
+    }
+
+    #[test]
+    fn config_without_sync_is_none() {
+        let toml = r#"
+idle_timeout_minutes = 15
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.sync.is_none());
+    }
+
+    #[test]
+    fn project_mapping_contains_all_entries() {
+        let toml = r#"
+[sync]
+workspace_id = "ws-123"
+other_project_id = "proj-other"
+work_day_start = "09:00"
+work_day_end = "17:00"
+
+[sync.project_mapping]
+"claude-tracker" = "proj-ct"
+"my-app" = "proj-app"
+"api-service" = "proj-api"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let mapping = &config.sync.as_ref().unwrap().project_mapping;
+
+        assert_eq!(mapping.len(), 3);
+        assert_eq!(mapping.get("claude-tracker"), Some(&"proj-ct".to_string()));
+        assert_eq!(mapping.get("my-app"), Some(&"proj-app".to_string()));
+        assert_eq!(mapping.get("api-service"), Some(&"proj-api".to_string()));
     }
 
     // --- Timeframe cycling ---------------------------------------------------

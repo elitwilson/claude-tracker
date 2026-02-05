@@ -216,3 +216,64 @@ fn query_range_empty_range_returns_empty() -> Result<()> {
     assert_eq!(results.len(), 0);
     Ok(())
 }
+
+// --- sync tracking -------------------------------------------------------
+
+#[test]
+fn synced_tables_are_created() -> Result<()> {
+    let dir = tempdir()?;
+    let store = Store::new(&dir.path().join("test.db"))?;
+
+    let count: i64 = store.conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('synced_days', 'synced_entries')",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 2);
+    Ok(())
+}
+
+#[test]
+fn day_is_synced_after_marking() -> Result<()> {
+    let dir = tempdir()?;
+    let store = Store::new(&dir.path().join("test.db"))?;
+
+    assert!(!store.is_day_synced("2026-02-04", "ws-123")?);
+
+    store.mark_day_synced("2026-02-04", "ws-123")?;
+
+    assert!(store.is_day_synced("2026-02-04", "ws-123")?);
+    assert!(!store.is_day_synced("2026-02-05", "ws-123")?);
+    Ok(())
+}
+
+#[test]
+fn entry_is_synced_after_marking() -> Result<()> {
+    let dir = tempdir()?;
+    let store = Store::new(&dir.path().join("test.db"))?;
+
+    assert!(!store.is_entry_synced("2026-02-04", "ws-123", "proj-a")?);
+
+    store.mark_entry_synced("2026-02-04", "ws-123", "proj-a", "entry-1")?;
+
+    assert!(store.is_entry_synced("2026-02-04", "ws-123", "proj-a")?);
+    assert!(!store.is_entry_synced("2026-02-04", "ws-123", "proj-b")?);
+    Ok(())
+}
+
+#[test]
+fn partial_day_is_not_synced_but_entries_are() -> Result<()> {
+    let dir = tempdir()?;
+    let store = Store::new(&dir.path().join("test.db"))?;
+
+    // Two of three entries posted; day not yet marked complete
+    store.mark_entry_synced("2026-02-04", "ws-123", "proj-a", "entry-1")?;
+    store.mark_entry_synced("2026-02-04", "ws-123", "proj-b", "entry-2")?;
+
+    assert!(!store.is_day_synced("2026-02-04", "ws-123")?);
+    assert!(store.is_entry_synced("2026-02-04", "ws-123", "proj-a")?);
+    assert!(store.is_entry_synced("2026-02-04", "ws-123", "proj-b")?);
+    assert!(!store.is_entry_synced("2026-02-04", "ws-123", "proj-c")?);
+    Ok(())
+}
