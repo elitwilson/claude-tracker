@@ -1,10 +1,12 @@
 mod parser;
 mod scanner;
 mod spinner;
+mod secrets;
 mod store;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
+use clap::Command;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -20,7 +22,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
 use std::sync::mpsc;
 
@@ -416,7 +418,34 @@ use std::time::{Duration, Instant};
 const TICK_RATE: Duration = Duration::from_millis(100);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
+fn run_setup() -> Result<()> {
+    print!("Enter Clockify API key: ");
+    io::stdout().flush().context("failed to flush stdout")?;
+
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("failed to read input")?;
+    let key = input.trim();
+
+    if key.is_empty() {
+        return Err(anyhow::anyhow!("no key provided"));
+    }
+
+    secrets::store_secret("clockify_api_key", key)?;
+    println!("Stored.");
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    let cli = Command::new("claude-tracker")
+        .subcommand(Command::new("setup").about("Store secrets in the OS keychain"));
+    let matches = cli.get_matches();
+
+    if matches.subcommand_matches("setup").is_some() {
+        return run_setup();
+    }
+
     let home = std::env::var("HOME").context("HOME env var not set")?;
     let projects_dir = Path::new(&home).join(".claude").join("projects");
 
