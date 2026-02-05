@@ -1,11 +1,11 @@
 ---
 version: 0.1.0
-updated: 2026-02-04
+updated: 2026-02-05
 ---
 # 10c: Clockify HTTP Client
 
 **Parent:** [10-clockify-sync.md](10-clockify-sync.md)\
-**Status:** Todo
+**Status:** Complete
 
 ---
 
@@ -28,9 +28,9 @@ POST time entries to Clockify. Takes an allocation from the transformation (10b)
 
 ## Success Criteria
 
-- [ ] POST creates a time entry visible in the Clockify UI
-- [ ] Returns the created entry ID on success
-- [ ] Returns a clear error on bad project ID, expired/invalid key, or network failure
+- [x] POST creates a time entry visible in the Clockify UI
+- [x] Returns the created entry ID on success
+- [x] Returns a clear error on bad project ID, expired/invalid key, or network failure
 
 ## Important Considerations
 
@@ -38,13 +38,20 @@ POST time entries to Clockify. Takes an allocation from the transformation (10b)
 - **`description` field.** Sending "Development" as a static string. If Clockify rejects the POST, this is the first thing to check.
 - **Times are already UTC.** The transformation (10b) produces UTC timestamps. Pass through directly — no conversion needed here.
 
-## Todo
+## Implementation
 
-- [ ] Implement POST to `/api/v1/workspaces/{workspaceId}/time-entries`
-- [ ] Use description "Development"; revisit if Clockify rejects
-- [ ] Return created entry ID on success
-- [ ] Test: POST a single entry, verify it appears in Clockify
-- [ ] Test: error handling — bad project ID, expired key, network failure
+- [x] Implemented `post_time_entry()` in [src/clockify.rs](../src/clockify.rs)
+- [x] POST to `/api/v1/workspaces/{workspaceId}/time-entries`
+- [x] Uses description "Development" (static string, working as expected)
+- [x] Returns created entry ID on success
+- [x] Integration tests in [src/clockify/tests.rs](../src/clockify/tests.rs) (run with `cargo test -- --ignored`)
+- [x] Error handling with helpful HTTP status hints (400 = invalid project, 401 = API key, 404 = not found, etc.)
+
+## Key Findings
+
+- **HTTP 400 for invalid project ID:** Clockify returns 400 (not 404) when the project ID is invalid
+- **Error enrichment:** Added `status_hint()` helper to provide context based on HTTP status codes
+- **Test cleanup:** Tests automatically DELETE created entries for cleanup
 
 ---
 

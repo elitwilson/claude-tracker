@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc, Weekday};
 use std::collections::HashMap;
 
 use crate::parser;
+use crate::store::Store;
 use crate::SyncConfig;
 
 pub(crate) struct Allocation {
@@ -151,6 +152,119 @@ fn compute_allocations(
         allocations,
         skipped,
     }
+}
+
+/// Check if a date is a weekday (Mon-Fri)
+pub(crate) fn is_weekday(date: NaiveDate) -> bool {
+    matches!(
+        date.weekday(),
+        Weekday::Mon | Weekday::Tue | Weekday::Wed | Weekday::Thu | Weekday::Fri
+    )
+}
+
+/// Run the sync loop: process all unsynced workdays from earliest session to yesterday
+pub fn run_sync(store: &Store, config: &SyncConfig) -> Result<()> {
+    // Get earliest session date
+    let start_date = match store.earliest_session_date()? {
+        Some(date) => date,
+        None => {
+            println!("No sessions found. Nothing to sync.");
+            return Ok(());
+        }
+    };
+
+    // End date is yesterday (today's work day isn't complete yet)
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().context("Failed to compute yesterday")?;
+
+    if start_date > yesterday {
+        println!("No complete workdays to sync.");
+        return Ok(());
+    }
+
+    println!("Syncing workdays from {} to {}...", start_date, yesterday);
+
+    let mut total_days = 0;
+    let mut total_entries = 0;
+
+    // Iterate over all dates from start to yesterday
+    let mut current_date = start_date;
+    while current_date <= yesterday {
+        // Skip weekends
+        if !is_weekday(current_date) {
+            current_date = current_date.succ_opt().context("Date overflow")?;
+            continue;
+        }
+
+        // Check if day is already synced
+        let date_str = current_date.format("%Y-%m-%d").to_string();
+        if store.is_day_synced(&date_str, &config.workspace_id)? {
+            current_date = current_date.succ_opt().context("Date overflow")?;
+            continue;
+        }
+
+        // Get UTC boundaries for this day
+        let (start_utc, end_utc) = work_day_boundaries(
+            &config.work_day_start,
+            &config.work_day_end,
+            current_date,
+        )?;
+
+        // Query sessions for this day
+        let sessions = store.query_range(start_utc, end_utc)?;
+
+        // Skip days with zero sessions (don't mark as synced)
+        if sessions.is_empty() {
+            current_date = current_date.succ_opt().context("Date overflow")?;
+            continue;
+        }
+
+        // Transform sessions → allocations
+        let alloc_result = allocate(&sessions, config, current_date)?;
+
+        if alloc_result.allocations.is_empty() {
+            println!("  {} - no allocations (all projects skipped)", date_str);
+            current_date = current_date.succ_opt().context("Date overflow")?;
+            continue;
+        }
+
+        // POST each allocation
+        print!("  {} - syncing", date_str);
+        let mut day_entries = 0;
+
+        for allocation in &alloc_result.allocations {
+            // Check per-entry idempotency
+            if store.is_entry_synced(&date_str, &config.workspace_id, &allocation.project_id)? {
+                continue;
+            }
+
+            // POST to Clockify
+            let entry_id = crate::clockify::post_time_entry(
+                &allocation.project_id,
+                allocation.start,
+                allocation.end,
+                &config.workspace_id,
+            )?;
+
+            // Record entry
+            store.mark_entry_synced(&date_str, &config.workspace_id, &allocation.project_id, &entry_id)?;
+            day_entries += 1;
+        }
+
+        // Mark day complete
+        store.mark_day_synced(&date_str, &config.workspace_id)?;
+
+        println!(" - {} entries posted", day_entries);
+        total_days += 1;
+        total_entries += day_entries;
+
+        current_date = current_date.succ_opt().context("Date overflow")?;
+    }
+
+    println!("---");
+    println!("Synced {} days, {} total entries", total_days, total_entries);
+
+    Ok(())
 }
 
 #[cfg(test)]

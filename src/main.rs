@@ -4,6 +4,7 @@ mod spinner;
 mod secrets;
 mod store;
 mod sync;
+mod clockify;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
@@ -451,11 +452,23 @@ fn run_setup() -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Command::new("claude-tracker")
-        .subcommand(Command::new("setup").about("Store secrets in the OS keychain"));
+        .subcommand(Command::new("setup").about("Store secrets in the OS keychain"))
+        .subcommand(Command::new("sync").about("Sync tracked time to Clockify"));
     let matches = cli.get_matches();
 
     if matches.subcommand_matches("setup").is_some() {
         return run_setup();
+    }
+
+    if matches.subcommand_matches("sync").is_some() {
+        ensure_config_exists()?;
+        let config = load_config()?;
+        let sync_config = config.sync.context("Missing [sync] section in config.toml")?;
+
+        let db_path = config_path()?.with_file_name("sessions.db");
+        let store = store::Store::new(&db_path)?;
+
+        return sync::run_sync(&store, &sync_config);
     }
 
     let home = std::env::var("HOME").context("HOME env var not set")?;

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, TimeDelta, Utc};
-use rusqlite::Connection;
+use chrono::{DateTime, Local, NaiveDate, TimeDelta, Utc};
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
 use crate::parser;
@@ -117,6 +117,23 @@ impl Store {
         }
 
         Ok(sessions)
+    }
+
+    pub fn earliest_session_date(&self) -> Result<Option<NaiveDate>> {
+        let result: Option<String> = self.conn.query_row(
+            "SELECT start_time FROM sessions ORDER BY start_time ASC LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).optional().context("querying earliest session")?;
+
+        match result {
+            Some(start_time_str) => {
+                let start_time: DateTime<Utc> = start_time_str.parse()
+                    .context("parsing earliest start_time")?;
+                Ok(Some(start_time.date_naive()))
+            }
+            None => Ok(None),
+        }
     }
 
     // --- sync tracking ----------------------------------------------------

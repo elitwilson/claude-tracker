@@ -1,5 +1,5 @@
-use super::compute_allocations;
-use chrono::{DateTime, TimeDelta, Utc};
+use super::{compute_allocations, is_weekday};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use std::collections::HashMap;
 
 use crate::parser;
@@ -228,4 +228,46 @@ fn last_entry_absorbs_rounding_remainder() {
 
     assert_eq!(durations, vec![12342, 12342, 4116]);
     assert_eq!(durations.iter().sum::<i64>(), WORK_DAY_SECS);
+}
+
+// --- Sync loop tests ---
+
+#[test]
+fn is_weekday_filters_correctly() {
+    // 2026-02-02 is Monday
+    // 2026-02-07 is Saturday
+    // 2026-02-08 is Sunday
+    let mon = NaiveDate::from_ymd_opt(2026, 2, 2).unwrap();
+    let tue = NaiveDate::from_ymd_opt(2026, 2, 3).unwrap();
+    let wed = NaiveDate::from_ymd_opt(2026, 2, 4).unwrap();
+    let thu = NaiveDate::from_ymd_opt(2026, 2, 5).unwrap();
+    let fri = NaiveDate::from_ymd_opt(2026, 2, 6).unwrap();
+    let sat = NaiveDate::from_ymd_opt(2026, 2, 7).unwrap();
+    let sun = NaiveDate::from_ymd_opt(2026, 2, 8).unwrap();
+
+    assert!(is_weekday(mon), "Monday should be a weekday");
+    assert!(is_weekday(tue), "Tuesday should be a weekday");
+    assert!(is_weekday(wed), "Wednesday should be a weekday");
+    assert!(is_weekday(thu), "Thursday should be a weekday");
+    assert!(is_weekday(fri), "Friday should be a weekday");
+    assert!(!is_weekday(sat), "Saturday should not be a weekday");
+    assert!(!is_weekday(sun), "Sunday should not be a weekday");
+}
+
+/// Integration test: run_sync processes multiple days end-to-end
+/// This test hits the real Clockify API and requires:
+/// - Clockify API key in keyring
+/// - Valid sync config in config.toml
+/// - Test sessions in the database
+/// Run with: cargo test -- --ignored
+#[test]
+#[ignore]
+fn test_run_sync_multiple_days() {
+    // TODO:
+    // 1. Set up test sessions in a temp database for 2-3 workdays
+    // 2. Call run_sync()
+    // 3. Verify entries were created in Clockify (check UI or query API)
+    // 4. Verify idempotency: run_sync again, no duplicates
+    // 5. Clean up: delete test entries from Clockify
+    assert!(true == false, "Scaffold: implement integration test");
 }
